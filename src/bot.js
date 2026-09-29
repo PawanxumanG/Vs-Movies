@@ -26,6 +26,17 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('[Unhandled Rejection]:', reason);
 });
 
+// Lightweight Health Ping Server for Render Free Tier Web Service
+const http = require('http');
+const PORT = process.env.PORT || 3000;
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('🎬 NetMirror Telegram Bot is Running 24/7 on Cloud!');
+});
+server.listen(PORT, () => {
+  console.log(`🌐 Health server listening on port ${PORT}`);
+});
+
 console.log('🤖 ======================================================');
 console.log('🚀 NETMIRROR MOVIE & SERIES TELEGRAM BOT RUNNING');
 console.log('🤖 ======================================================');
