@@ -48,23 +48,30 @@ function getDecodedToken(cookieStr) {
 }
 
 /**
- * Search movies & TV series using NetMirror Mobile API
+ * Search movies & TV series across NetMirror streaming engine
  */
 async function searchContent(query, retry = true) {
   const cookie = await getActiveCookie(!retry);
-  const url = `${MOBILE_BASE_URL}/mobile/search.php?s=${encodeURIComponent(query.trim())}`;
+  const tokenVal = getDecodedToken(cookie);
+
+  const cleanQuery = query.trim();
+  const tvUrl = `${TV_BASE_URL}/newtv/search.php?s=${encodeURIComponent(cleanQuery)}`;
 
   try {
-    const res = await axios.get(url, {
+    const res = await axios.get(tvUrl, {
       headers: {
-        ...MOBILE_HEADERS,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0',
+        'X-Requested-With': 'NetmirrorNewTV v1.0',
+        'Referer': 'https://net52.cc',
         'Cookie': cookie,
+        'Usertoken': tokenVal,
+        'Ott': 'nf',
       },
       timeout: 8000,
     });
 
     const data = res.data;
-    if (data && data.searchResult && Array.isArray(data.searchResult)) {
+    if (data && data.searchResult && Array.isArray(data.searchResult) && data.searchResult.length > 0) {
       return data.searchResult.map(item => ({
         id: item.id,
         title: (item.t || '').trim(),
@@ -72,75 +79,14 @@ async function searchContent(query, retry = true) {
         poster: item.id ? `https://imgcdn.kim/poster/v/${item.id}.jpg` : '',
       }));
     }
-  } catch (e) {
-    if (retry) {
-      console.warn('[Search Retry with Fresh Cookie]...', e.message);
-      await getActiveCookie(true);
-      return searchContent(query, false);
-    }
-    console.warn('[Mobile Search Fallback]:', e.message);
-  }
-
-  // Fallback to TV search
-  try {
-    const freshCookie = await getActiveCookie();
-    const tvUrl = `${TV_BASE_URL}/newtv/search.php?s=${encodeURIComponent(query.trim())}`;
-    const tokenVal = getDecodedToken(freshCookie);
-    const res = await axios.get(tvUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0',
-        'X-Requested-With': 'NetmirrorNewTV v1.0',
-        'Referer': 'https://net52.cc',
-        'Cookie': freshCookie,
-        'Usertoken': tokenVal,
-        'Ott': 'nf',
-      },
-      timeout: 8000,
-    });
-    if (res.data && res.data.searchResult && Array.isArray(res.data.searchResult)) {
-      return res.data.searchResult.map(item => ({
-        id: item.id,
-        title: (item.t || '').trim(),
-        ott: item.ott || res.data.ott || 'nf',
-        poster: item.id ? `https://imgcdn.kim/poster/v/${item.id}.jpg` : '',
-      }));
-    }
   } catch (tvErr) {
-    console.error('[TV Search Fallback Error]:', tvErr.message);
+    console.warn('[TV Search Warn]:', tvErr.message);
   }
 
-  return [];
-}
-
-/**
- * Get full metadata for a movie or TV show using NetMirror Mobile API
- */
-async function getContentDetails(id, ott = 'nf', retry = true) {
-  const cookie = await getActiveCookie(!retry);
-  const tokenVal = getDecodedToken(cookie);
-  const url = `${MOBILE_BASE_URL}/mobile/post.php?id=${id}`;
-
-  let data = {};
-  try {
-    const res = await axios.get(url, {
-      headers: {
-        ...MOBILE_HEADERS,
-        'Cookie': cookie,
-        'Ott': ott,
-      },
-      timeout: 8000,
-    });
-    data = res.data || {};
-  } catch (e) {
-    if (retry) {
-      console.warn('[Post Details Retry with Fresh Cookie]...', e.message);
-      await getActiveCookie(true);
-      return getContentDetails(id, ott, false);
-    }
-    // TV fallback
-    const tvUrl = `${TV_BASE_URL}/newtv/post.php?id=${id}`;
+  // If no results on 'nf', try multi-OTT search (Prime Video, Disney+)
+  for (const ott of ['pv', 'ds', 'zee', 'hbo']) {
     try {
-      const tvRes = await axios.get(tvUrl, {
+      const res = await axios.get(tvUrl, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0',
           'X-Requested-With': 'NetmirrorNewTV v1.0',
@@ -149,12 +95,51 @@ async function getContentDetails(id, ott = 'nf', retry = true) {
           'Usertoken': tokenVal,
           'Ott': ott,
         },
-        timeout: 8000,
+        timeout: 6000,
       });
-      data = tvRes.data || {};
-    } catch (tvErr) {
-      console.error('[TV Post Fallback Error]:', tvErr.message);
+      if (res.data && res.data.searchResult && Array.isArray(res.data.searchResult) && res.data.searchResult.length > 0) {
+        return res.data.searchResult.map(item => ({
+          id: item.id,
+          title: (item.t || '').trim(),
+          ott: ott,
+          poster: item.id ? `https://imgcdn.kim/poster/v/${item.id}.jpg` : '',
+        }));
+      }
+    } catch (e) {}
+  }
+
+  return [];
+}
+
+/**
+ * Get full metadata for a movie or TV show
+ */
+async function getContentDetails(id, ott = 'nf', retry = true) {
+  const cookie = await getActiveCookie(!retry);
+  const tokenVal = getDecodedToken(cookie);
+  const tvUrl = `${TV_BASE_URL}/newtv/post.php?id=${id}`;
+
+  let data = {};
+  try {
+    const tvRes = await axios.get(tvUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0',
+        'X-Requested-With': 'NetmirrorNewTV v1.0',
+        'Referer': 'https://net52.cc',
+        'Cookie': cookie,
+        'Usertoken': tokenVal,
+        'Ott': ott,
+      },
+      timeout: 8000,
+    });
+    data = tvRes.data || {};
+  } catch (tvErr) {
+    if (retry) {
+      console.warn('[Post Details Retry with Fresh Cookie]...', tvErr.message);
+      await getActiveCookie(true);
+      return getContentDetails(id, ott, false);
     }
+    console.error('[TV Post Error]:', tvErr.message);
   }
 
   const title = (data.title || data.t || '').trim() || 'Movie';
