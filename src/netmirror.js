@@ -50,8 +50,8 @@ function getDecodedToken(cookieStr) {
 /**
  * Search movies & TV series using NetMirror Mobile API
  */
-async function searchContent(query) {
-  const cookie = await getActiveCookie();
+async function searchContent(query, retry = true) {
+  const cookie = await getActiveCookie(!retry);
   const url = `${MOBILE_BASE_URL}/mobile/search.php?s=${encodeURIComponent(query.trim())}`;
 
   try {
@@ -65,38 +65,44 @@ async function searchContent(query) {
 
     const data = res.data;
     if (data && data.searchResult && Array.isArray(data.searchResult)) {
-      const imgcdn = 'https://imgcdn.kim/poster/341/';
       return data.searchResult.map(item => ({
         id: item.id,
         title: (item.t || '').trim(),
         ott: item.ott || data.ott || 'nf',
-        poster: item.id ? imgcdn.replace('------------------', item.id) : '',
+        poster: item.id ? `https://imgcdn.kim/poster/v/${item.id}.jpg` : '',
       }));
     }
   } catch (e) {
+    if (retry) {
+      console.warn('[Search Retry with Fresh Cookie]...', e.message);
+      await getActiveCookie(true);
+      return searchContent(query, false);
+    }
     console.warn('[Mobile Search Fallback]:', e.message);
   }
 
   // Fallback to TV search
   try {
+    const freshCookie = await getActiveCookie();
     const tvUrl = `${TV_BASE_URL}/newtv/search.php?s=${encodeURIComponent(query.trim())}`;
-    const tokenVal = getDecodedToken(cookie);
+    const tokenVal = getDecodedToken(freshCookie);
     const res = await axios.get(tvUrl, {
       headers: {
-        ...MOBILE_HEADERS,
-        'Cookie': cookie,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0',
+        'X-Requested-With': 'NetmirrorNewTV v1.0',
+        'Referer': 'https://net52.cc',
+        'Cookie': freshCookie,
         'Usertoken': tokenVal,
         'Ott': 'nf',
       },
       timeout: 8000,
     });
     if (res.data && res.data.searchResult && Array.isArray(res.data.searchResult)) {
-      const imgcdn = res.data.imgcdn || 'https://imgcdn.kim/poster/341/';
       return res.data.searchResult.map(item => ({
         id: item.id,
         title: (item.t || '').trim(),
         ott: item.ott || res.data.ott || 'nf',
-        poster: item.id ? imgcdn.replace('------------------', item.id) : '',
+        poster: item.id ? `https://imgcdn.kim/poster/v/${item.id}.jpg` : '',
       }));
     }
   } catch (tvErr) {
@@ -109,8 +115,9 @@ async function searchContent(query) {
 /**
  * Get full metadata for a movie or TV show using NetMirror Mobile API
  */
-async function getContentDetails(id, ott = 'nf') {
-  const cookie = await getActiveCookie();
+async function getContentDetails(id, ott = 'nf', retry = true) {
+  const cookie = await getActiveCookie(!retry);
+  const tokenVal = getDecodedToken(cookie);
   const url = `${MOBILE_BASE_URL}/mobile/post.php?id=${id}`;
 
   let data = {};
@@ -125,13 +132,19 @@ async function getContentDetails(id, ott = 'nf') {
     });
     data = res.data || {};
   } catch (e) {
+    if (retry) {
+      console.warn('[Post Details Retry with Fresh Cookie]...', e.message);
+      await getActiveCookie(true);
+      return getContentDetails(id, ott, false);
+    }
     // TV fallback
     const tvUrl = `${TV_BASE_URL}/newtv/post.php?id=${id}`;
-    const tokenVal = getDecodedToken(cookie);
     try {
       const tvRes = await axios.get(tvUrl, {
         headers: {
-          ...MOBILE_HEADERS,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0',
+          'X-Requested-With': 'NetmirrorNewTV v1.0',
+          'Referer': 'https://net52.cc',
           'Cookie': cookie,
           'Usertoken': tokenVal,
           'Ott': ott,
@@ -139,7 +152,9 @@ async function getContentDetails(id, ott = 'nf') {
         timeout: 8000,
       });
       data = tvRes.data || {};
-    } catch (tvErr) {}
+    } catch (tvErr) {
+      console.error('[TV Post Fallback Error]:', tvErr.message);
+    }
   }
 
   const title = (data.title || data.t || '').trim() || 'Movie';
@@ -155,7 +170,7 @@ async function getContentDetails(id, ott = 'nf') {
     type: data.type || 'm', // 'm' = Movie, 's' = Series
     synopsis: data.desc || data.m_desc || '',
     poster: poster,
-    languages: data.lang || [{ l: 'English', s: 'eng' }, { l: 'Hindi', s: 'hin' }],
+    languages: Array.isArray(data.lang) && data.lang.length > 0 ? data.lang : [{ l: 'English', s: 'eng' }, { l: 'Hindi', s: 'hin' }],
     moreDetails: [],
     ott: data.ott || ott,
   };
@@ -164,8 +179,9 @@ async function getContentDetails(id, ott = 'nf') {
 /**
  * Fetch seasons and episodes for TV Series
  */
-async function getEpisodes(id, ott = 'nf') {
-  const cookie = await getActiveCookie();
+async function getEpisodes(id, ott = 'nf', retry = true) {
+  const cookie = await getActiveCookie(!retry);
+  const tokenVal = getDecodedToken(cookie);
   const url = `${MOBILE_BASE_URL}/mobile/episodes.php?id=${id}`;
 
   try {
@@ -185,12 +201,19 @@ async function getEpisodes(id, ott = 'nf') {
       nextPageSeason: data.nextPageSeason || null,
     };
   } catch (e) {
+    if (retry) {
+      console.warn('[Episodes Retry with Fresh Cookie]...', e.message);
+      await getActiveCookie(true);
+      return getEpisodes(id, ott, false);
+    }
     // TV fallback
     const tvUrl = `${TV_BASE_URL}/newtv/episodes.php?id=${id}`;
-    const tokenVal = getDecodedToken(cookie);
     const res = await axios.get(tvUrl, {
       headers: {
-        ...MOBILE_HEADERS,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0',
+        'X-Requested-With': 'NetmirrorNewTV v1.0',
+        'Referer': 'https://net52.cc',
+        'Cookie': cookie,
         'Usertoken': tokenVal,
         'Ott': ott,
       },
@@ -208,22 +231,33 @@ async function getEpisodes(id, ott = 'nf') {
 /**
  * Parse Master M3U8 Playlist and extract all streams & audio tracks
  */
-async function getStreamDetails(id, ott = 'nf') {
-  const cookie = await getActiveCookie();
+async function getStreamDetails(id, ott = 'nf', retry = true) {
+  const cookie = await getActiveCookie(!retry);
   const tokenVal = getDecodedToken(cookie);
 
   const playerUrl = `${TV_BASE_URL}/newtv/player.php?id=${id}`;
 
-  const playerRes = await axios.get(playerUrl, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0',
-      'X-Requested-With': 'NetmirrorNewTV v1.0',
-      'Referer': 'https://net52.cc',
-      'Ott': ott,
-      'Usertoken': tokenVal,
-    },
-    timeout: 10000,
-  });
+  let playerRes;
+  try {
+    playerRes = await axios.get(playerUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0',
+        'X-Requested-With': 'NetmirrorNewTV v1.0',
+        'Referer': 'https://net52.cc',
+        'Cookie': cookie,
+        'Ott': ott,
+        'Usertoken': tokenVal,
+      },
+      timeout: 10000,
+    });
+  } catch (err) {
+    if (retry) {
+      console.warn('[Player Stream Retry with Fresh Cookie]...', err.message);
+      await getActiveCookie(true);
+      return getStreamDetails(id, ott, false);
+    }
+    throw err;
+  }
 
   const pData = playerRes.data || {};
   let masterM3u8Url = pData.video_link;

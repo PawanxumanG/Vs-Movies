@@ -9,6 +9,10 @@ on:
     branches:
       - main
 
+concurrency:
+  group: netmirror-cinema-bot-runner
+  cancel-in-progress: true
+
 jobs:
   run-cinema-bot:
     runs-on: ubuntu-latest
