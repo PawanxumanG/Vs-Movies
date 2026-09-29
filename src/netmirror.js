@@ -24,6 +24,37 @@ let cachedUserToken = null;
 let lastTokenFetch = 0;
 
 /**
+ * Get active NetMirror API base URL
+ */
+async function getApiBaseUrl(forceRefresh = false) {
+  const now = Date.now();
+  if (!forceRefresh && cachedBaseUrl && now - lastBaseUrlCheck < 600000) {
+    return cachedBaseUrl;
+  }
+
+  for (const domain of DISCOVERY_DOMAINS) {
+    try {
+      const res = await axios.get(`${domain}/checknewtv.php`, {
+        headers: HEADERS,
+        timeout: 5000,
+      });
+      if (res.data && res.data.token_hash) {
+        const decoded = Buffer.from(res.data.token_hash, 'base64').toString('utf8');
+        if (decoded.startsWith('http')) {
+          cachedBaseUrl = decoded;
+          lastBaseUrlCheck = now;
+          return cachedBaseUrl;
+        }
+      }
+    } catch (e) {
+      // Continue to next domain
+    }
+  }
+
+  return cachedBaseUrl || 'https://tv.imgcdn.kim';
+}
+
+/**
  * Get or auto-refresh valid NetMirror User Token
  */
 async function getUserToken(forceRefresh = false) {
@@ -55,37 +86,6 @@ async function getUserToken(forceRefresh = false) {
   }
 
   return cachedUserToken || 'none';
-}
-
-/**
- * Get active NetMirror API base URL
- */
-async function getApiBaseUrl(forceRefresh = false) {
-  const now = Date.now();
-  if (!forceRefresh && cachedBaseUrl && now - lastBaseUrlCheck < 600000) {
-    return cachedBaseUrl;
-  }
-
-  for (const domain of DISCOVERY_DOMAINS) {
-    try {
-      const res = await axios.get(`${domain}/checknewtv.php`, {
-        headers: HEADERS,
-        timeout: 5000,
-      });
-      if (res.data && res.data.token_hash) {
-        const decoded = Buffer.from(res.data.token_hash, 'base64').toString('utf8');
-        if (decoded.startsWith('http')) {
-          cachedBaseUrl = decoded;
-          lastBaseUrlCheck = now;
-          return cachedBaseUrl;
-        }
-      }
-    } catch (e) {
-      // Continue to next domain
-    }
-  }
-
-  return cachedBaseUrl || 'https://tv.imgcdn.kim';
 }
 
 /**
@@ -189,43 +189,6 @@ async function getEpisodes(id, ott = 'nf') {
     nextPage: data.nextPage || null,
     nextPageSeason: data.nextPageSeason || null,
   };
-}
-
-let cachedUserToken = null;
-let lastTokenFetch = 0;
-
-/**
- * Get or auto-refresh valid NetMirror User Token
- */
-async function getUserToken(forceRefresh = false) {
-  const now = Date.now();
-  if (!forceRefresh && cachedUserToken && now - lastTokenFetch < 3600000) {
-    return cachedUserToken;
-  }
-
-  const baseUrl = await getApiBaseUrl();
-  const otps = ['111111', '843381', '000000', '123456'];
-
-  for (const otp of otps) {
-    try {
-      const res = await axios.get(`${baseUrl}/newtv/otp.php`, {
-        headers: {
-          ...HEADERS,
-          'Otp': otp,
-        },
-        timeout: 5000,
-      });
-
-      if (res.data && res.data.status === 'ok' && res.data.usertoken) {
-        cachedUserToken = res.data.usertoken;
-        lastTokenFetch = now;
-        console.log('[NetMirror] ✅ Generated verified User Token session.');
-        return cachedUserToken;
-      }
-    } catch (e) {}
-  }
-
-  return cachedUserToken || 'none';
 }
 
 /**
@@ -344,6 +307,7 @@ async function getStreamDetails(id, ott = 'nf') {
 
 module.exports = {
   getApiBaseUrl,
+  getUserToken,
   searchContent,
   getContentDetails,
   getEpisodes,
