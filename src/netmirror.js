@@ -159,6 +159,7 @@ async function getContentDetails(id, ott = 'nf', retry = true) {
 
   const title = (data.title || data.t || '').trim() || 'Movie';
   const poster = `https://imgcdn.kim/poster/h/${id}.jpg`;
+  const isSeries = data.type === 't' || data.type === 's' || data.type === 'tv' || (data.season && data.season.length > 0) || (data.episodes && data.episodes.length > 0);
 
   return {
     id: data.main_id || id,
@@ -167,11 +168,13 @@ async function getContentDetails(id, ott = 'nf', retry = true) {
     runtime: data.runtime || '',
     rating: data.ua || '',
     quality: data.hdsd || 'HD',
-    type: data.type || 'm', // 'm' = Movie, 's' = Series
+    type: isSeries ? 's' : 'm', // 'm' = Movie, 's' = Series
     synopsis: data.desc || data.m_desc || '',
     poster: poster,
     languages: Array.isArray(data.lang) && data.lang.length > 0 ? data.lang : [{ l: 'English', s: 'eng' }, { l: 'Hindi', s: 'hin' }],
-    moreDetails: [],
+    moreDetails: data.moredetails || [],
+    seasons: data.season || [],
+    episodes: data.episodes || [],
     ott: data.ott || ott,
   };
 }
@@ -180,52 +183,19 @@ async function getContentDetails(id, ott = 'nf', retry = true) {
  * Fetch seasons and episodes for TV Series
  */
 async function getEpisodes(id, ott = 'nf', retry = true) {
-  const cookie = await getActiveCookie(!retry);
-  const tokenVal = getDecodedToken(cookie);
-  const url = `${MOBILE_BASE_URL}/mobile/episodes.php?id=${id}`;
-
   try {
-    const res = await axios.get(url, {
-      headers: {
-        ...MOBILE_HEADERS,
-        'Cookie': cookie,
-        'Ott': ott,
-      },
-      timeout: 8000,
-    });
-
-    const data = res.data || {};
-    return {
-      episodes: Array.isArray(data.episodes) ? data.episodes : [],
-      nextPage: data.nextPage || null,
-      nextPageSeason: data.nextPageSeason || null,
-    };
-  } catch (e) {
-    if (retry) {
-      console.warn('[Episodes Retry with Fresh Cookie]...', e.message);
-      await getActiveCookie(true);
-      return getEpisodes(id, ott, false);
+    const details = await getContentDetails(id, ott, retry);
+    if (details.episodes && details.episodes.length > 0) {
+      return {
+        episodes: details.episodes,
+        seasons: details.seasons || [],
+      };
     }
-    // TV fallback
-    const tvUrl = `${TV_BASE_URL}/newtv/episodes.php?id=${id}`;
-    const res = await axios.get(tvUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0',
-        'X-Requested-With': 'NetmirrorNewTV v1.0',
-        'Referer': 'https://net52.cc',
-        'Cookie': cookie,
-        'Usertoken': tokenVal,
-        'Ott': ott,
-      },
-      timeout: 8000,
-    });
-    const data = res.data || {};
-    return {
-      episodes: Array.isArray(data.episodes) ? data.episodes : [],
-      nextPage: data.nextPage || null,
-      nextPageSeason: data.nextPageSeason || null,
-    };
+  } catch (e) {
+    console.error('[getEpisodes Error]:', e.message);
   }
+
+  return { episodes: [], seasons: [] };
 }
 
 /**
