@@ -55,9 +55,12 @@ async function searchContent(query, retry = true) {
   const tokenVal = getDecodedToken(cookie);
 
   const cleanQuery = query.trim();
-  const tvUrl = `${TV_BASE_URL}/newtv/search.php?s=${encodeURIComponent(cleanQuery)}`;
+  const queryLower = cleanQuery.toLowerCase();
+  const queryWords = queryLower.split(/\s+/).filter(w => w.length > 1);
 
+  // 1. Primary: TV Search on Netflix (nf)
   try {
+    const tvUrl = `${TV_BASE_URL}/newtv/search.php?s=${encodeURIComponent(cleanQuery)}`;
     const res = await axios.get(tvUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0',
@@ -67,11 +70,11 @@ async function searchContent(query, retry = true) {
         'Usertoken': tokenVal,
         'Ott': 'nf',
       },
-      timeout: 8000,
+      timeout: 12000,
     });
 
-    const data = res.data;
-    if (data && data.searchResult && Array.isArray(data.searchResult) && data.searchResult.length > 0) {
+    const data = typeof res.data === 'string' ? JSON.parse(res.data || '{}') : (res.data || {});
+    if (data.searchResult && Array.isArray(data.searchResult) && data.searchResult.length > 0) {
       return data.searchResult.map(item => ({
         id: item.id,
         title: (item.t || '').trim(),
@@ -80,12 +83,45 @@ async function searchContent(query, retry = true) {
       }));
     }
   } catch (tvErr) {
-    console.warn('[TV Search Warn]:', tvErr.message);
+    console.warn('[TV Search Error]:', tvErr.message);
   }
 
-  // If no results on 'nf', try multi-OTT search (Prime Video, Disney+)
+  // 2. Secondary: Mobile Search API
+  try {
+    const mobileUrl = `${MOBILE_BASE_URL}/mobile/search.php?s=${encodeURIComponent(cleanQuery)}`;
+    const res = await axios.get(mobileUrl, {
+      headers: {
+        ...MOBILE_HEADERS,
+        'Cookie': cookie,
+      },
+      timeout: 12000,
+    });
+
+    const data = typeof res.data === 'string' ? JSON.parse(res.data || '{}') : (res.data || {});
+    if (data.searchResult && Array.isArray(data.searchResult) && data.searchResult.length > 0) {
+      // Filter out junk trending items if the API returned 20 home items
+      const validMatches = data.searchResult.filter(item => {
+        const title = (item.t || '').toLowerCase();
+        return queryWords.length === 0 || queryWords.some(w => title.includes(w));
+      });
+
+      if (validMatches.length > 0) {
+        return validMatches.map(item => ({
+          id: item.id,
+          title: (item.t || '').trim(),
+          ott: item.ott || data.ott || 'nf',
+          poster: item.id ? `https://imgcdn.kim/poster/v/${item.id}.jpg` : '',
+        }));
+      }
+    }
+  } catch (mErr) {
+    console.warn('[Mobile Search Error]:', mErr.message);
+  }
+
+  // 3. Multi-OTT Search (Prime Video, Disney+, Zee5)
   for (const ott of ['pv', 'ds', 'zee', 'hbo']) {
     try {
+      const tvUrl = `${TV_BASE_URL}/newtv/search.php?s=${encodeURIComponent(cleanQuery)}`;
       const res = await axios.get(tvUrl, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0',
@@ -95,10 +131,12 @@ async function searchContent(query, retry = true) {
           'Usertoken': tokenVal,
           'Ott': ott,
         },
-        timeout: 6000,
+        timeout: 8000,
       });
-      if (res.data && res.data.searchResult && Array.isArray(res.data.searchResult) && res.data.searchResult.length > 0) {
-        return res.data.searchResult.map(item => ({
+
+      const data = typeof res.data === 'string' ? JSON.parse(res.data || '{}') : (res.data || {});
+      if (data.searchResult && Array.isArray(data.searchResult) && data.searchResult.length > 0) {
+        return data.searchResult.map(item => ({
           id: item.id,
           title: (item.t || '').trim(),
           ott: ott,
