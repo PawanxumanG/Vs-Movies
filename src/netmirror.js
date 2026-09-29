@@ -15,11 +15,11 @@ let cachedFirebaseCookie = null;
 let lastCookieFetch = 0;
 
 /**
- * Fetch active, verified bypass cookie from ShinzoApk Firebase Realtime DB
+ * Fetch active, verified bypass cookie and decoded usertoken from ShinzoApk Firebase Realtime DB
  */
 async function getActiveCookie(forceRefresh = false) {
   const now = Date.now();
-  if (!forceRefresh && cachedFirebaseCookie && now - lastCookieFetch < 120000) {
+  if (!forceRefresh && cachedFirebaseCookie && now - lastCookieFetch < 60000) {
     return cachedFirebaseCookie;
   }
 
@@ -35,6 +35,16 @@ async function getActiveCookie(forceRefresh = false) {
   }
 
   return cachedFirebaseCookie || 't_hash_t=none';
+}
+
+function getDecodedToken(cookieStr) {
+  if (!cookieStr) return 'none';
+  const raw = cookieStr.replace('t_hash_t=', '').trim();
+  try {
+    return decodeURIComponent(raw);
+  } catch (e) {
+    return raw;
+  }
 }
 
 /**
@@ -58,8 +68,8 @@ async function searchContent(query) {
       const imgcdn = 'https://imgcdn.kim/poster/341/';
       return data.searchResult.map(item => ({
         id: item.id,
-        title: item.t,
-        ott: item.ott || 'nf',
+        title: (item.t || '').trim(),
+        ott: item.ott || data.ott || 'nf',
         poster: item.id ? imgcdn.replace('------------------', item.id) : '',
       }));
     }
@@ -70,7 +80,7 @@ async function searchContent(query) {
   // Fallback to TV search
   try {
     const tvUrl = `${TV_BASE_URL}/newtv/search.php?s=${encodeURIComponent(query.trim())}`;
-    const tokenVal = (cookie || '').replace('t_hash_t=', '');
+    const tokenVal = getDecodedToken(cookie);
     const res = await axios.get(tvUrl, {
       headers: {
         ...MOBILE_HEADERS,
@@ -84,8 +94,8 @@ async function searchContent(query) {
       const imgcdn = res.data.imgcdn || 'https://imgcdn.kim/poster/341/';
       return res.data.searchResult.map(item => ({
         id: item.id,
-        title: item.t,
-        ott: item.ott || 'nf',
+        title: (item.t || '').trim(),
+        ott: item.ott || res.data.ott || 'nf',
         poster: item.id ? imgcdn.replace('------------------', item.id) : '',
       }));
     }
@@ -103,21 +113,41 @@ async function getContentDetails(id, ott = 'nf') {
   const cookie = await getActiveCookie();
   const url = `${MOBILE_BASE_URL}/mobile/post.php?id=${id}`;
 
-  const res = await axios.get(url, {
-    headers: {
-      ...MOBILE_HEADERS,
-      'Cookie': cookie,
-      'Ott': ott,
-    },
-    timeout: 8000,
-  });
+  let data = {};
+  try {
+    const res = await axios.get(url, {
+      headers: {
+        ...MOBILE_HEADERS,
+        'Cookie': cookie,
+        'Ott': ott,
+      },
+      timeout: 8000,
+    });
+    data = res.data || {};
+  } catch (e) {
+    // TV fallback
+    const tvUrl = `${TV_BASE_URL}/newtv/post.php?id=${id}`;
+    const tokenVal = getDecodedToken(cookie);
+    try {
+      const tvRes = await axios.get(tvUrl, {
+        headers: {
+          ...MOBILE_HEADERS,
+          'Cookie': cookie,
+          'Usertoken': tokenVal,
+          'Ott': ott,
+        },
+        timeout: 8000,
+      });
+      data = tvRes.data || {};
+    } catch (tvErr) {}
+  }
 
-  const data = res.data || {};
-  let poster = `https://imgcdn.kim/poster/h/${id}.jpg`;
+  const title = (data.title || data.t || '').trim() || 'Movie';
+  const poster = `https://imgcdn.kim/poster/h/${id}.jpg`;
 
   return {
     id: data.main_id || id,
-    title: data.title || 'Unknown Title',
+    title: title,
     year: data.year || '',
     runtime: data.runtime || '',
     rating: data.ua || '',
@@ -157,7 +187,7 @@ async function getEpisodes(id, ott = 'nf') {
   } catch (e) {
     // TV fallback
     const tvUrl = `${TV_BASE_URL}/newtv/episodes.php?id=${id}`;
-    const tokenVal = (cookie || '').replace('t_hash_t=', '');
+    const tokenVal = getDecodedToken(cookie);
     const res = await axios.get(tvUrl, {
       headers: {
         ...MOBILE_HEADERS,
@@ -180,16 +210,17 @@ async function getEpisodes(id, ott = 'nf') {
  */
 async function getStreamDetails(id, ott = 'nf') {
   const cookie = await getActiveCookie();
-  const tokenVal = (cookie || '').replace('t_hash_t=', '');
+  const tokenVal = getDecodedToken(cookie);
 
   const playerUrl = `${TV_BASE_URL}/newtv/player.php?id=${id}`;
 
   const playerRes = await axios.get(playerUrl, {
     headers: {
-      ...MOBILE_HEADERS,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0',
+      'X-Requested-With': 'NetmirrorNewTV v1.0',
+      'Referer': 'https://net52.cc',
       'Ott': ott,
       'Usertoken': tokenVal,
-      'Cookie': cookie,
     },
     timeout: 10000,
   });
@@ -205,9 +236,9 @@ async function getStreamDetails(id, ott = 'nf') {
   // Fetch Master Playlist
   const m3u8Res = await axios.get(masterM3u8Url, {
     headers: {
-      ...MOBILE_HEADERS,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0',
+      'X-Requested-With': 'NetmirrorNewTV v1.0',
       'Referer': referer,
-      'Cookie': cookie,
     },
     timeout: 10000,
   });
