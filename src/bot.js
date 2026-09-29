@@ -26,6 +26,14 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('[Unhandled Rejection]:', reason);
 });
 
+// Graceful shutdown on cancellation signals
+const shutdown = () => {
+  console.log('🛑 Stopping bot polling gracefully...');
+  bot.stopPolling().then(() => process.exit(0)).catch(() => process.exit(0));
+};
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
+
 // Lightweight Health Ping Server for Render Free Tier Web Service
 const http = require('http');
 const PORT = process.env.PORT || 3000;
