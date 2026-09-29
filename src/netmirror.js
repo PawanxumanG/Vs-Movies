@@ -3,6 +3,7 @@ const axios = require('axios');
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0',
   'X-Requested-With': 'NetmirrorNewTV v1.0',
+  'Referer': 'https://net52.cc',
   'Cache-Control': 'no-cache',
   'Pragma': 'no-cache',
 };
@@ -19,6 +20,42 @@ const DISCOVERY_DOMAINS = [
 
 let cachedBaseUrl = 'https://tv.imgcdn.kim';
 let lastBaseUrlCheck = 0;
+let cachedUserToken = null;
+let lastTokenFetch = 0;
+
+/**
+ * Get or auto-refresh valid NetMirror User Token
+ */
+async function getUserToken(forceRefresh = false) {
+  const now = Date.now();
+  if (!forceRefresh && cachedUserToken && now - lastTokenFetch < 3600000) {
+    return cachedUserToken;
+  }
+
+  const baseUrl = await getApiBaseUrl();
+  const otps = ['111111', '843381', '000000', '123456'];
+
+  for (const otp of otps) {
+    try {
+      const res = await axios.get(`${baseUrl}/newtv/otp.php`, {
+        headers: {
+          ...HEADERS,
+          'Otp': otp,
+        },
+        timeout: 5000,
+      });
+
+      if (res.data && res.data.status === 'ok' && res.data.usertoken) {
+        cachedUserToken = res.data.usertoken;
+        lastTokenFetch = now;
+        console.log('[NetMirror] ✅ Generated verified User Token session.');
+        return cachedUserToken;
+      }
+    } catch (e) {}
+  }
+
+  return cachedUserToken || 'none';
+}
 
 /**
  * Get active NetMirror API base URL
@@ -56,9 +93,17 @@ async function getApiBaseUrl(forceRefresh = false) {
  */
 async function searchContent(query) {
   const baseUrl = await getApiBaseUrl();
+  const token = await getUserToken();
   const url = `${baseUrl}/newtv/search.php?s=${encodeURIComponent(query.trim())}`;
   
-  const res = await axios.get(url, { headers: HEADERS, timeout: 10000 });
+  const res = await axios.get(url, {
+    headers: {
+      ...HEADERS,
+      'Ott': 'nf',
+      'Usertoken': token,
+    },
+    timeout: 10000,
+  });
   const data = res.data;
 
   if (!data || !data.searchResult || !Array.isArray(data.searchResult)) {
@@ -87,10 +132,15 @@ async function searchContent(query) {
  */
 async function getContentDetails(id, ott = 'nf') {
   const baseUrl = await getApiBaseUrl();
+  const token = await getUserToken();
   const url = `${baseUrl}/newtv/post.php?id=${id}`;
 
   const res = await axios.get(url, {
-    headers: { ...HEADERS, 'Ott': ott },
+    headers: {
+      ...HEADERS,
+      'Ott': ott,
+      'Usertoken': token,
+    },
     timeout: 10000,
   });
 
@@ -121,10 +171,15 @@ async function getContentDetails(id, ott = 'nf') {
  */
 async function getEpisodes(id, ott = 'nf') {
   const baseUrl = await getApiBaseUrl();
+  const token = await getUserToken();
   const url = `${baseUrl}/newtv/episodes.php?id=${id}`;
 
   const res = await axios.get(url, {
-    headers: { ...HEADERS, 'Ott': ott },
+    headers: {
+      ...HEADERS,
+      'Ott': ott,
+      'Usertoken': token,
+    },
     timeout: 10000,
   });
 
