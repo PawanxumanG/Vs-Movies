@@ -1,0 +1,45 @@
+name: 🚀 24/7 NetMirror Telegram Cinema Bot
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Trigger automatically every 5 hours to ensure uninterrupted 24/7 continuous operation
+    - cron: '0 */5 * * *'
+  push:
+    branches:
+      - main
+
+jobs:
+  run-cinema-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # Max runtime per run
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: 🎥 Install FFmpeg
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ffmpeg curl ca-certificates
+
+      - name: 📦 Install Node Packages
+        run: npm ci || npm install
+
+      - name: 🚀 Run NetMirror Telegram Bot (High-Speed 10Gbps Cloud)
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || '8376422363:AAECh6Y_RfzJ5z2xUHR4ebJbtBoWTsMMCoI' }}
+          DOWNLOAD_DIR: /tmp/netmirror_downloads
+          PORT: 8080
+        run: |
+          echo "============================================================"
+          echo "🎬 STARTING NETMIRROR CINEMA BOT ON GITHUB AZURE CLOUD"
+          echo "⚡ NETWORK: 10 Gbps Unlimited High-Speed Datacenter"
+          echo "============================================================"
+          node src/bot.js
