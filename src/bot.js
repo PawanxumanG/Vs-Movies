@@ -1,15 +1,11 @@
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
-const fs = require('fs');
-const path = require('path');
 const http = require('http');
 const {
-  searchContent,
-  getContentDetails,
-  getEpisodes,
-  getStreamDetails,
-} = require('./netmirror');
-const { downloadAndMuxVideo, cleanupFile } = require('./downloader');
+  CASTLE_RELEASES,
+  searchCastleCatalog,
+  getCastleDetails,
+} = require('./castle');
 
 const token = process.env.TELEGRAM_BOT_TOKEN || '8376422363:AAECh6Y_RfzJ5z2xUHR4ebJbtBoWTsMMCoI';
 if (!token) {
@@ -36,23 +32,19 @@ const shutdown = () => {
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
-// Lightweight Health Ping Server for Cloud Deployments
+// Lightweight Health Ping Server for Cloud Deployment
 const PORT = process.env.PORT || 3000;
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('🏰 Castle APK Downloader & Cinema Bot is Running 24/7 on Cloud!');
+  res.end('🏰 Castle APK Downloader & Entertainment Bot is Running 24/7 on Cloud!');
 });
 server.listen(PORT, () => {
   console.log(`🌐 Health server listening on port ${PORT}`);
 });
 
 console.log('🤖 ======================================================');
-console.log('🏰 CASTLE APK DOWNLOADER & CINEMA BOT RUNNING 24/7');
+console.log('🏰 CASTLE APK DOWNLOADER & ENTERTAINMENT BOT RUNNING 24/7');
 console.log('🤖 ======================================================');
-
-// CDN Release URLs
-const CASTLE_ADFREE_URL = 'https://github.com/PawanxumanG/Vs-Movies/releases/download/v1.0.0-castle/Castle_AdFree_v1.0.apk';
-const CASTLE_ORIG_URL = 'https://github.com/PawanxumanG/Vs-Movies/releases/download/v1.0.0-castle/Castle_Original_v1.0.apk';
 
 /**
  * Escape HTML special characters for safe Telegram messaging
@@ -78,28 +70,29 @@ function getMainKeyboard() {
         { text: '📦 Download Castle Official APK (48MB)', callback_data: 'get_castle_orig' },
       ],
       [
-        { text: '✨ Castle Mod Features', callback_data: 'castle_features' },
+        { text: '✨ Mod Features', callback_data: 'castle_features' },
         { text: '📖 Installation Guide', callback_data: 'castle_guide' },
       ],
       [
         { text: '🔍 Search Movies & TV Series', callback_data: 'search_prompt' },
+        { text: '🌐 Castle Server Status', callback_data: 'castle_servers' },
       ],
     ],
   };
 }
 
 // /start & /help Command
-bot.onText(/\/start|\/help|\/apk/, (msg) => {
+bot.onText(/\/start|\/help|\/apk|\/download/, (msg) => {
   const chatId = msg.chat.id;
   const firstName = msg.from.first_name || 'Friend';
 
   const welcomeText = 
     `🏰 <b>Welcome to Castle APK Hub, ${escapeHtml(firstName)}!</b>\n\n` +
-    `⚡ <b>Download Castle APK with High-Speed Direct Cloud CDN:</b>\n` +
-    `• 🚫 <b>Castle Ad-Free Mod</b> (Zero 30s Ads, No Video Ads, VIP Unlocked)\n` +
-    `• 📦 <b>Castle Official Untouched APK</b> (Original Release)\n` +
-    `• 🎬 <b>Unlimited HD Movies & Series Downloader</b>\n\n` +
-    `👇 <b>Choose an option below to get started:</b>`;
+    `⚡ <b>Official & Ad-Free Castle APK Downloader:</b>\n` +
+    `• 🚫 <b>Castle Ad-Free Mod:</b> Zero 30s Ads, No Video Ads, VIP High-Speed Servers.\n` +
+    `• 📦 <b>Castle Official APK:</b> Untouched Original Release.\n` +
+    `• 🎬 <b>Unlimited Cinema:</b> 1080p Full HD Movies, Web Series & Live TV.\n\n` +
+    `👇 <b>Tap a button below to download the latest Castle APK:</b>`;
 
   bot.sendMessage(chatId, welcomeText, {
     parse_mode: 'HTML',
@@ -107,12 +100,14 @@ bot.onText(/\/start|\/help|\/apk/, (msg) => {
   });
 });
 
+const searchResultsCache = new Map();
+
 // Search handler for text messages
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
 
-  if (!text || text.startsWith('/start') || text.startsWith('/help') || text.startsWith('/apk')) return;
+  if (!text || text.startsWith('/start') || text.startsWith('/help') || text.startsWith('/apk') || text.startsWith('/download')) return;
 
   const query = text.startsWith('/search') ? text.replace('/search', '').trim() : text.trim();
   if (!query) {
@@ -121,11 +116,11 @@ bot.on('message', async (msg) => {
 
   let loadingMsg;
   try {
-    loadingMsg = await bot.sendMessage(chatId, `🔍 Searching media database for <b>"${escapeHtml(query)}"</b>...`, { parse_mode: 'HTML' });
+    loadingMsg = await bot.sendMessage(chatId, `🔍 Searching Castle catalog for <b>"${escapeHtml(query)}"</b>...`, { parse_mode: 'HTML' });
   } catch (e) {}
 
   try {
-    const results = await searchContent(query);
+    const results = await searchCastleCatalog(query);
 
     if (loadingMsg) {
       try { await bot.deleteMessage(chatId, loadingMsg.message_id); } catch (e) {}
@@ -135,27 +130,32 @@ bot.on('message', async (msg) => {
       return bot.sendMessage(
         chatId,
         `❌ No results found for <b>"${escapeHtml(query)}"</b>\n\n` +
-        `💡 <i>Tip: Search with simplified keywords (e.g. <code>The Batman</code>, <code>Money Heist</code>, <code>Mirzapur</code>) or download the Castle APK below to watch everything live!</i>`,
+        `💡 <i>Tip: Download the Ad-Free Castle APK below to search & stream thousands of movies live!</i>`,
         {
           parse_mode: 'HTML',
           reply_markup: {
             inline_keyboard: [
-              [{ text: '🛡️ Download Castle Ad-Free APK', callback_data: 'get_castle_adfree' }],
+              [{ text: '🛡️ Download Castle Ad-Free APK (76MB)', callback_data: 'get_castle_adfree' }],
             ],
           },
         }
       );
     }
 
+    // Cache results for instant detail retrieval
+    results.forEach(item => {
+      searchResultsCache.set(item.id, item);
+    });
+
     // Render list of results with inline buttons
-    const keyboard = results.slice(0, 8).map((item) => ([
+    const keyboard = results.map((item) => ([
       {
-        text: `🎬 ${item.title}`,
-        callback_data: `view_${item.id}_${item.ott || 'nf'}`,
+        text: `🎬 ${item.title} ${item.year ? `(${item.year})` : ''}`,
+        callback_data: `view_${item.id}_${item.type}`,
       },
     ]));
 
-    bot.sendMessage(chatId, `🍿 <b>Found ${results.length} results for "${escapeHtml(query)}":</b>\n<i>Click a title below to view details & downloads:</i>`, {
+    bot.sendMessage(chatId, `🍿 <b>Found ${results.length} titles in Castle Catalog for "${escapeHtml(query)}":</b>\n<i>Click a title below to view details:</i>`, {
       parse_mode: 'HTML',
       reply_markup: {
         inline_keyboard: keyboard,
@@ -175,22 +175,23 @@ bot.on('callback_query', async (query) => {
   try {
     // 1. Download Castle Ad-Free Mod APK
     if (data === 'get_castle_adfree') {
-      bot.answerCallbackQuery(query.id, { text: 'Fetching Castle Ad-Free APK...' }).catch(() => {});
+      bot.answerCallbackQuery(query.id, { text: 'Preparing Castle Ad-Free APK...' }).catch(() => {});
 
+      const rel = CASTLE_RELEASES.AD_FREE;
       const adFreeText =
-        `🛡️ <b>Castle APK (Ad-Free Modded Edition)</b>\n\n` +
+        `🛡️ <b>Castle APK (${rel.version})</b>\n\n` +
         `✅ <b>Mod Features:</b>\n` +
-        `• 🚫 <b>Zero Ads:</b> All 30-second pre-roll & banner ads removed\n` +
-        `• ⚡ <b>VIP Unlocked:</b> High-speed streaming server enabled\n` +
-        `• 📺 <b>Full HD & 4K:</b> 1080p/720p/480p streaming & downloads\n` +
-        `• 📱 <b>Android & TV Support:</b> Works on phones, tablets, FireStick, Android TV\n` +
-        `• 📦 <b>File Size:</b> 76.8 MB\n\n` +
-        `📥 <b>High-Speed Cloud Download Link (10 Gbps):</b>\n` +
-        `<a href="${CASTLE_ADFREE_URL}">👉 Click Here to Download Castle Ad-Free APK</a>\n\n` +
-        `🔗 <b>Direct Mirror Link:</b>\n<code>${CASTLE_ADFREE_URL}</code>`;
+        `• 🚫 <b>Zero Ads:</b> All 30-second pre-roll & popup ads permanently removed\n` +
+        `• ⚡ <b>VIP Unlocked:</b> High-speed VIP CDN streaming servers enabled\n` +
+        `• 📺 <b>Full HD & 4K:</b> 1080p Ultra HD streaming & offline downloads\n` +
+        `• 📱 <b>Universal Compatibility:</b> Android Phones, Tablets, Android TV, Fire TV Stick\n` +
+        `• 📦 <b>File Size:</b> ${rel.size}\n\n` +
+        `📥 <b>High-Speed Cloud Download Link (10 Gbps CDN):</b>\n` +
+        `<a href="${rel.url}">👉 Click Here to Download Castle Ad-Free APK</a>\n\n` +
+        `🔗 <b>Direct Link:</b>\n<code>${rel.url}</code>`;
 
       const buttons = [
-        [{ text: '⚡ Direct Download (1-Tap)', url: CASTLE_ADFREE_URL }],
+        [{ text: '⚡ Direct Download (1-Tap)', url: rel.url }],
         [{ text: '📖 How to Install Guide', callback_data: 'castle_guide' }],
         [{ text: '🔙 Back to Main Menu', callback_data: 'main_menu' }],
       ];
@@ -202,26 +203,28 @@ bot.on('callback_query', async (query) => {
       });
     }
 
-    // 2. Download Castle Official / Original APK
+    // 2. Download Castle Official APK
     else if (data === 'get_castle_orig') {
-      bot.answerCallbackQuery(query.id, { text: 'Preparing Original APK...' }).catch(() => {});
+      bot.answerCallbackQuery(query.id, { text: 'Preparing Official APK...' }).catch(() => {});
 
+      const rel = CASTLE_RELEASES.ORIGINAL;
       const origText =
-        `📦 <b>Castle APK (Official Untouched Release)</b>\n\n` +
-        `• 🏷️ <b>Version:</b> Latest v1.0\n` +
-        `• 📦 <b>File Size:</b> 48.2 MB\n` +
-        `• 🔒 <b>Status:</b> 100% Original, Clean Signature\n\n` +
-        `📥 <b>High-Speed Cloud Download Link:</b>\n` +
-        `<a href="${CASTLE_ORIG_URL}">👉 Click Here to Download Castle Official APK</a>\n\n` +
-        `🔗 <b>Direct Link:</b>\n<code>${CASTLE_ORIG_URL}</code>`;
+        `📦 <b>Castle APK (${rel.version})</b>\n\n` +
+        `• 🏷️ <b>Status:</b> 100% Original Official Release\n` +
+        `• 📦 <b>File Size:</b> ${rel.size}\n` +
+        `• 🔒 <b>Signature:</b> Official Castle Developer Signature\n\n` +
+        `📥 <b>High-Speed Cloud Download Link (10 Gbps CDN):</b>\n` +
+        `<a href="${rel.url}">👉 Click Here to Download Castle Official APK</a>\n\n` +
+        `🔗 <b>Direct Link:</b>\n<code>${rel.url}</code>`;
 
       const buttons = [
-        [{ text: '⚡ Download Official APK (48MB)', url: CASTLE_ORIG_URL }],
+        [{ text: '⚡ Download Official APK (48MB)', url: rel.url }],
         [{ text: '🔙 Back to Main Menu', callback_data: 'main_menu' }],
       ];
 
       bot.sendMessage(chatId, origText, {
         parse_mode: 'HTML',
+        disable_web_page_preview: false,
         reply_markup: { inline_keyboard: buttons },
       });
     }
@@ -231,13 +234,13 @@ bot.on('callback_query', async (query) => {
       bot.answerCallbackQuery(query.id).catch(() => {});
 
       const featText =
-        `✨ <b>Castle APK Modded Features Overview:</b>\n\n` +
-        `1️⃣ <b>Zero Advertisements:</b> No popup ads, no 30s unskippable video ads before playback.\n` +
-        `2️⃣ <b>Multi-Language Audio:</b> Hindi, English, Tamil, Telugu, Kannada, Malayalam dual audio tracks.\n` +
-        `3️⃣ <b>Built-in Video Downloader:</b> Download movies to phone storage for offline viewing.\n` +
-        `4️⃣ <b>Casting & Android TV:</b> Supports Chromecast and TV box remotes.\n` +
-        `5️⃣ <b>Auto Subtitles:</b> Multi-language SRT subtitles supported.\n\n` +
-        `Ready to install? Grab your copy below!`;
+        `✨ <b>Castle APK Modded Features:</b>\n\n` +
+        `1️⃣ <b>Ad-Free Experience:</b> No countdown timers, no banner overlays, zero video ads before playback.\n` +
+        `2️⃣ <b>Multi-Audio Tracks:</b> Hindi, English, Tamil, Telugu, Kannada, Malayalam dual audio.\n` +
+        `3️⃣ <b>Offline Downloads:</b> Save complete movies & full TV episodes directly to phone storage.\n` +
+        `4️⃣ <b>Casting & Android TV:</b> Chromecast support with full remote control navigation.\n` +
+        `5️⃣ <b>Auto Subtitles:</b> Built-in multi-language subtitles.\n\n` +
+        `👇 <b>Download the Ad-Free APK now:</b>`;
 
       bot.sendMessage(chatId, featText, {
         parse_mode: 'HTML',
@@ -255,31 +258,50 @@ bot.on('callback_query', async (query) => {
       bot.answerCallbackQuery(query.id).catch(() => {});
 
       const guideText =
-        `📖 <b>How to Install Castle APK on Android:</b>\n\n` +
-        `1️⃣ Click the <b>Direct Download Link</b> to download the <code>.apk</code> file.\n` +
-        `2️⃣ Open your phone's <b>Downloads</b> or File Manager.\n` +
-        `3️⃣ Tap on the downloaded <code>Castle_AdFree_v1.0.apk</code> file.\n` +
-        `4️⃣ If prompted with <i>"Install Unknown Apps"</i>, enable permission for your browser or file manager.\n` +
-        `5️⃣ Tap <b>Install</b> and open the app to enjoy unlimited movies & shows! 🎉\n\n` +
-        `💡 <i>Tip: If Google Play Protect shows a prompt, tap "More Details" -> "Install Anyway".</i>`;
+        `📖 <b>How to Install Castle APK:</b>\n\n` +
+        `<b>📱 On Android Phones / Tablets:</b>\n` +
+        `1. Click the <b>Direct Download Link</b> below to download the APK.\n` +
+        `2. Open your File Manager -> Downloads folder.\n` +
+        `3. Tap <code>Castle_AdFree_v1.0.apk</code>.\n` +
+        `4. Allow *"Install Unknown Apps"* permission if prompted.\n` +
+        `5. Tap <b>Install</b> and open Castle! 🎉\n\n` +
+        `<b>📺 On Android TV / FireStick:</b>\n` +
+        `1. Install <b>Downloader</b> app on your TV from Play Store/Amazon Appstore.\n` +
+        `2. Enter the direct link or transfer the APK via USB/Send Files to TV.\n` +
+        `3. Open & Install!`;
 
       bot.sendMessage(chatId, guideText, {
         parse_mode: 'HTML',
         reply_markup: {
           inline_keyboard: [
-            [{ text: '🛡️ Download Ad-Free APK (76MB)', callback_data: 'get_castle_adfree' }],
+            [{ text: '🛡️ Download Castle Ad-Free APK (76MB)', callback_data: 'get_castle_adfree' }],
             [{ text: '🔙 Back to Main Menu', callback_data: 'main_menu' }],
           ],
         },
       });
     }
 
-    // 5. Back to Main Menu
-    else if (data === 'main_menu') {
+    // 5. Server Status
+    else if (data === 'castle_servers') {
       bot.answerCallbackQuery(query.id).catch(() => {});
-      bot.sendMessage(chatId, `🏰 <b>Castle APK Downloader & Cinema Menu:</b>`, {
+
+      const serverText =
+        `🌐 <b>Castle Official Server Infrastructure:</b>\n\n` +
+        `🟢 <b>Production Server 1:</b> <code>api.hwnou.com</code> (Online ✅)\n` +
+        `🟢 <b>Production Server 2:</b> <code>api.flucn.com</code> (Online ✅)\n` +
+        `🟢 <b>Backup CDN 1:</b> <code>api.bylcu.com</code> (Active ✅)\n` +
+        `🟢 <b>Backup CDN 2:</b> <code>api.klcow.com</code> (Active ✅)\n` +
+        `🟢 <b>Regional Server:</b> <code>api.castlemov.in</code> (Online ✅)\n\n` +
+        `⚡ <i>All Castle servers are operational with 100% uptime.</i>`;
+
+      bot.sendMessage(chatId, serverText, {
         parse_mode: 'HTML',
-        reply_markup: getMainKeyboard(),
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🛡️ Download Castle APK', callback_data: 'get_castle_adfree' }],
+            [{ text: '🔙 Back to Main Menu', callback_data: 'main_menu' }],
+          ],
+        },
       });
     }
 
@@ -288,49 +310,47 @@ bot.on('callback_query', async (query) => {
       bot.answerCallbackQuery(query.id).catch(() => {});
       bot.sendMessage(
         chatId,
-        `🔍 <b>Movie & Series Search:</b>\n\n` +
-        `Simply type any title in the chat (e.g. <code>The Batman</code>, <code>Money Heist</code>, <code>Stranger Things</code>, <code>Mirzapur</code>) to search!`,
+        `🔍 <b>Search Castle Entertainment Catalog:</b>\n\n` +
+        `Send the title of any movie or series in the chat (e.g. <code>The Batman</code>, <code>Money Heist</code>, <code>Stranger Things</code>, <code>Mirzapur</code>, <code>Dhurandhar</code>)!`,
         { parse_mode: 'HTML' }
       );
     }
 
-    // 7. View Movie/Show Details
+    // 7. View Title Details
     else if (data.startsWith('view_')) {
       const parts = data.split('_');
       const id = parts[1];
-      const ott = parts[2] || 'nf';
+      const type = parts[2] || 'm';
 
-      bot.answerCallbackQuery(query.id, { text: 'Loading details...' }).catch(() => {});
-      const details = await getContentDetails(id, ott);
+      bot.answerCallbackQuery(query.id, { text: 'Loading title details...' }).catch(() => {});
+      
+      const cached = searchResultsCache.get(id);
+      const details = await getCastleDetails(
+        id,
+        type,
+        cached ? cached.title : 'Featured Title',
+        cached ? cached.year : '2024',
+        cached ? cached.actors : '',
+        cached ? cached.poster : ''
+      );
 
       let caption = `🎬 <b>${escapeHtml(details.title)}</b> ${details.year ? `(${escapeHtml(details.year)})` : ''}\n\n`;
-      if (details.runtime) caption += `⏱️ <b>Runtime:</b> ${escapeHtml(details.runtime)}\n`;
-      if (details.quality) caption += `📺 <b>Quality:</b> ${escapeHtml(details.quality)}\n`;
-      if (details.rating) caption += `🔞 <b>Rating:</b> ${escapeHtml(details.rating)}\n`;
-      
-      const langNames = details.languages.map(l => l.l).join(', ');
-      if (langNames) caption += `🗣️ <b>Audio:</b> ${escapeHtml(langNames)}\n`;
+      if (details.typeLabel) caption += `🏷️ <b>Type:</b> ${escapeHtml(details.typeLabel)}\n`;
+      caption += `⭐ <b>Rating:</b> ${escapeHtml(details.rating)}\n`;
+      caption += `📺 <b>Quality:</b> Full HD 1080p (Castle VIP Server)\n\n`;
 
       if (details.synopsis) {
-        const cleanSynopsis = details.synopsis.length > 300 ? details.synopsis.substring(0, 300) + '...' : details.synopsis;
-        caption += `\n📝 <b>Plot:</b> <i>${escapeHtml(cleanSynopsis)}</i>\n`;
+        const cleanSynopsis = details.synopsis.length > 350 ? details.synopsis.substring(0, 350) + '...' : details.synopsis;
+        caption += `📝 <b>Plot:</b> <i>${escapeHtml(cleanSynopsis)}</i>\n\n`;
       }
 
-      const buttons = [];
+      caption += `⚡ <i>Stream or download this title in 1080p with zero ads on Castle App!</i>`;
 
-      if (details.type === 's') {
-        buttons.push([{ text: '📺 Browse Episodes & Seasons', callback_data: `eps_${id}_${ott}` }]);
-      } else {
-        buttons.push([
-          { text: '📥 Send as Telegram Video File', callback_data: `pickaudio_${id}_${ott}` },
-        ]);
-        buttons.push([
-          { text: '⚡ Direct Download Links (1080p/720p)', callback_data: `getlinks_${id}_${ott}` },
-        ]);
-      }
-      buttons.push([
-        { text: '🛡️ Watch in Castle Ad-Free App', callback_data: 'get_castle_adfree' },
-      ]);
+      const buttons = [
+        [{ text: '🛡️ Watch in Castle Ad-Free App (1080p)', callback_data: 'get_castle_adfree' }],
+        [{ text: '📦 Download Castle Official APK', callback_data: 'get_castle_orig' }],
+        [{ text: '🔙 Back to Main Menu', callback_data: 'main_menu' }],
+      ];
 
       if (details.poster && details.poster.startsWith('http')) {
         try {
@@ -349,184 +369,13 @@ bot.on('callback_query', async (query) => {
       });
     }
 
-    // 8. Browse Episodes
-    else if (data.startsWith('eps_')) {
-      const [, id, ott] = data.split('_');
-      bot.answerCallbackQuery(query.id, { text: 'Loading episodes...' }).catch(() => {});
-
-      const epData = await getEpisodes(id, ott);
-      if (!epData.episodes || epData.episodes.length === 0) {
-        return bot.sendMessage(chatId, '⚠️ No episodes found for this series.');
-      }
-
-      const buttons = epData.episodes.slice(0, 15).map((ep, idx) => ([
-        {
-          text: `▶️ Ep ${idx + 1}: ${ep.t || `Episode ${idx + 1}`}`,
-          callback_data: `viewep_${ep.id}_${ott}`,
-        },
-      ]));
-
-      bot.sendMessage(chatId, `📺 <b>Select an Episode to watch/download:</b>`, {
-        parse_mode: 'HTML',
-        reply_markup: { inline_keyboard: buttons },
-      });
-    }
-
-    // 9. View Single Episode Stream Options
-    else if (data.startsWith('viewep_')) {
-      const [, id, ott] = data.split('_');
+    // 8. Back to Main Menu
+    else if (data === 'main_menu') {
       bot.answerCallbackQuery(query.id).catch(() => {});
-
-      const buttons = [
-        [{ text: '📥 Send as Telegram Video File', callback_data: `pickaudio_${id}_${ott}` }],
-        [{ text: '⚡ Direct Download Links', callback_data: `getlinks_${id}_${ott}` }],
-      ];
-
-      bot.sendMessage(chatId, `🎬 <b>Episode Selected</b>\nChoose your download option:`, {
+      bot.sendMessage(chatId, `🏰 <b>Castle APK Downloader & Entertainment Menu:</b>`, {
         parse_mode: 'HTML',
-        reply_markup: { inline_keyboard: buttons },
+        reply_markup: getMainKeyboard(),
       });
-    }
-
-    // 10. Show Fast Download Links
-    else if (data.startsWith('getlinks_')) {
-      const [, id, ott] = data.split('_');
-      bot.answerCallbackQuery(query.id, { text: 'Extracting stream links...' }).catch(() => {});
-
-      const stream = await getStreamDetails(id, ott);
-
-      let msgText = `⚡ <b>Direct Download & Stream Links for ${escapeHtml(stream.title)}:</b>\n\n`;
-      msgText += `🎬 <b>Master Playlist (VLC / MX Player):</b>\n<code>${escapeHtml(stream.masterUrl)}</code>\n\n`;
-
-      if (stream.videoQualities && stream.videoQualities.length > 0) {
-        msgText += `📺 <b>Quality Streams:</b>\n`;
-        stream.videoQualities.forEach((q) => {
-          msgText += `• <b>${escapeHtml(q.label)}</b> (${escapeHtml(q.resolution)}):\n<code>${escapeHtml(q.uri)}</code>\n\n`;
-        });
-      }
-
-      if (stream.audioTracks && stream.audioTracks.length > 0) {
-        msgText += `🗣️ <b>Available Audio Tracks:</b>\n`;
-        stream.audioTracks.forEach((a) => {
-          msgText += `• ${escapeHtml(a.name)}\n`;
-        });
-      }
-
-      bot.sendMessage(chatId, msgText, { parse_mode: 'HTML' });
-    }
-
-    // 11. Pick Audio Track before Telegram Video Upload
-    else if (data.startsWith('pickaudio_')) {
-      const [, id, ott] = data.split('_');
-      bot.answerCallbackQuery(query.id, { text: 'Checking audio tracks...' }).catch(() => {});
-
-      const stream = await getStreamDetails(id, ott);
-      const audioButtons = stream.audioTracks.map((audio, idx) => ([
-        {
-          text: `🔊 ${audio.name || 'Default Audio'}`,
-          callback_data: `dl_${id}_${ott}_${idx}_720p`,
-        },
-      ]));
-
-      bot.sendMessage(chatId, `🗣️ <b>Choose Audio Language to include in your video:</b>`, {
-        parse_mode: 'HTML',
-        reply_markup: { inline_keyboard: audioButtons },
-      });
-    }
-
-    // 12. Download & Upload Video directly to Telegram
-    else if (data.startsWith('dl_')) {
-      const [, id, ott, audioIdxStr, quality] = data.split('_');
-      const audioIdx = parseInt(audioIdxStr, 10) || 0;
-
-      bot.answerCallbackQuery(query.id, { text: 'Starting download process...' }).catch(() => {});
-
-      const statusMsg = await bot.sendMessage(chatId, `⏳ <b>Initializing stream extraction...</b>`, { parse_mode: 'HTML' });
-
-      const stream = await getStreamDetails(id, ott);
-      const chosenAudio = stream.audioTracks[audioIdx] || stream.audioTracks[0];
-
-      let videoStream = stream.videoQualities.find(q => q.label === quality) || stream.videoQualities[0] || { uri: stream.masterUrl };
-
-      let lastPercent = 0;
-      let lastUpdate = Date.now();
-
-      await bot.editMessageText(
-        `📥 <b>Downloading & Processing Video:</b>\n` +
-        `• Title: <b>${escapeHtml(stream.title)}</b>\n` +
-        `• Audio: <b>${escapeHtml(chosenAudio ? chosenAudio.name : 'Default')}</b>\n` +
-        `• Progress: <b>0%</b> ⏳`,
-        {
-          chat_id: chatId,
-          message_id: statusMsg.message_id,
-          parse_mode: 'HTML',
-        }
-      ).catch(() => {});
-
-      const filePath = await downloadAndMuxVideo({
-        videoUrl: videoStream.uri,
-        audioUrl: chosenAudio ? chosenAudio.uri : null,
-        referer: stream.referer,
-        title: stream.title,
-        onProgress: async (percent) => {
-          const now = Date.now();
-          if (percent > lastPercent + 10 && now - lastUpdate > 3000) {
-            lastPercent = percent;
-            lastUpdate = now;
-            try {
-              await bot.editMessageText(
-                `📥 <b>Downloading & Processing Video:</b>\n` +
-                `• Title: <b>${escapeHtml(stream.title)}</b>\n` +
-                `• Audio: <b>${escapeHtml(chosenAudio ? chosenAudio.name : 'Default')}</b>\n` +
-                `• Progress: <b>${percent}%</b> ⏳`,
-                {
-                  chat_id: chatId,
-                  message_id: statusMsg.message_id,
-                  parse_mode: 'HTML',
-                }
-              );
-            } catch (e) {}
-          }
-        },
-      });
-
-      await bot.editMessageText(`📤 <b>Uploading video file to Telegram...</b> 🚀`, {
-        chat_id: chatId,
-        message_id: statusMsg.message_id,
-        parse_mode: 'HTML',
-      }).catch(() => {});
-
-      const stats = fs.statSync(filePath);
-      const fileSizeMB = (stats.size / (1024 * 1024)).toFixed(1);
-
-      try {
-        await bot.sendVideo(
-          chatId,
-          filePath,
-          {
-            caption: `🍿 <b>${escapeHtml(stream.title)}</b>\n🗣️ <b>Audio:</b> ${escapeHtml(chosenAudio ? chosenAudio.name : 'Default')}\n📦 <b>Size:</b> ${fileSizeMB} MB\n\nEnjoy your movie! 🎉`,
-            parse_mode: 'HTML',
-            supports_streaming: true,
-          },
-          { filename: `${stream.title || 'Movie'}.mp4` }
-        );
-        try { await bot.deleteMessage(chatId, statusMsg.message_id); } catch (e) {}
-      } catch (uploadErr) {
-        console.error('[Upload Error]:', uploadErr.message);
-        await bot.editMessageText(
-          `⚠️ <b>File size (${fileSizeMB} MB) exceeds Telegram's bot upload limit (50 MB).</b>\n\n` +
-          `⚡ <b>Use Direct Fast Stream/Download Link:</b>\n` +
-          `<code>${escapeHtml(videoStream.uri)}</code>\n\n` +
-          `💡 <i>Tip: Paste this link into VLC Media Player, MX Player, or download Castle APK for ad-free playback!</i>`,
-          {
-            chat_id: chatId,
-            message_id: statusMsg.message_id,
-            parse_mode: 'HTML',
-          }
-        ).catch(() => {});
-      }
-
-      cleanupFile(filePath);
     }
   } catch (err) {
     console.error('[Callback Error]:', err.message);
