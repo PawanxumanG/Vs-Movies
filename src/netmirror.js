@@ -260,82 +260,96 @@ async function getStreamDetails(id, ott = 'nf', retry = true) {
     throw new Error('Stream URL not found for this title');
   }
 
-  // Fetch Master Playlist
-  const m3u8Res = await axios.get(masterM3u8Url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0',
-      'X-Requested-With': 'NetmirrorNewTV v1.0',
-      'Referer': referer,
-    },
-    timeout: 10000,
-  });
-
-  const m3u8Content = m3u8Res.data;
-  const lines = typeof m3u8Content === 'string' ? m3u8Content.split('\n') : [];
-
   const audioTracks = [];
   const videoQualities = [];
   const subtitles = [];
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
+  // Try to fetch & parse Master Playlist sub-streams
+  try {
+    const m3u8Res = await axios.get(masterM3u8Url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:136.0) Gecko/20100101 Firefox/136.0 /OS.GatuNewTV v1.0',
+        'X-Requested-With': 'NetmirrorNewTV v1.0',
+        'Referer': referer,
+        'Cookie': cookie,
+      },
+      timeout: 8000,
+    });
 
-    // Audio Tracks
-    if (line.startsWith('#EXT-X-MEDIA:TYPE=AUDIO')) {
-      const nameMatch = line.match(/NAME="([^"]+)"/);
-      const langMatch = line.match(/LANGUAGE="([^"]+)"/);
-      const uriMatch = line.match(/URI="([^"]+)"/);
-      const isDefault = line.includes('DEFAULT=YES');
+    const m3u8Content = m3u8Res.data;
+    const lines = typeof m3u8Content === 'string' ? m3u8Content.split('\n') : [];
 
-      if (uriMatch) {
-        audioTracks.push({
-          name: nameMatch ? nameMatch[1] : (langMatch ? langMatch[1] : 'Audio'),
-          lang: langMatch ? langMatch[1] : 'und',
-          uri: uriMatch[1],
-          isDefault,
-        });
-      }
-    }
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
 
-    // Subtitles
-    if (line.startsWith('#EXT-X-MEDIA:TYPE=SUBTITLES')) {
-      const nameMatch = line.match(/NAME="([^"]+)"/);
-      const langMatch = line.match(/LANGUAGE="([^"]+)"/);
-      const uriMatch = line.match(/URI="([^"]+)"/);
-      if (uriMatch) {
-        subtitles.push({
-          name: nameMatch ? nameMatch[1] : 'Subtitles',
-          lang: langMatch ? langMatch[1] : 'en',
-          uri: uriMatch[1],
-        });
-      }
-    }
+      // Audio Tracks
+      if (line.startsWith('#EXT-X-MEDIA:TYPE=AUDIO')) {
+        const nameMatch = line.match(/NAME="([^"]+)"/);
+        const langMatch = line.match(/LANGUAGE="([^"]+)"/);
+        const uriMatch = line.match(/URI="([^"]+)"/);
+        const isDefault = line.includes('DEFAULT=YES');
 
-    // Video Streams
-    if (line.startsWith('#EXT-X-STREAM-INF:')) {
-      const resMatch = line.match(/RESOLUTION=(\d+x\d+)/);
-      const bandwidthMatch = line.match(/BANDWIDTH=(\d+)/);
-      const nextLine = lines[i + 1] ? lines[i + 1].trim() : '';
-
-      if (nextLine && !nextLine.startsWith('#')) {
-        let label = 'Auto';
-        if (resMatch) {
-          const height = resMatch[1].split('x')[1];
-          label = `${height}p`;
+        if (uriMatch) {
+          audioTracks.push({
+            name: nameMatch ? nameMatch[1] : (langMatch ? langMatch[1] : 'Audio'),
+            lang: langMatch ? langMatch[1] : 'und',
+            uri: uriMatch[1],
+            isDefault,
+          });
         }
-        videoQualities.push({
-          label,
-          resolution: resMatch ? resMatch[1] : 'Unknown',
-          bandwidth: bandwidthMatch ? parseInt(bandwidthMatch[1], 10) : 0,
-          uri: nextLine,
-        });
+      }
+
+      // Subtitles
+      if (line.startsWith('#EXT-X-MEDIA:TYPE=SUBTITLES')) {
+        const nameMatch = line.match(/NAME="([^"]+)"/);
+        const langMatch = line.match(/LANGUAGE="([^"]+)"/);
+        const uriMatch = line.match(/URI="([^"]+)"/);
+        if (uriMatch) {
+          subtitles.push({
+            name: nameMatch ? nameMatch[1] : 'Subtitles',
+            lang: langMatch ? langMatch[1] : 'en',
+            uri: uriMatch[1],
+          });
+        }
+      }
+
+      // Video Streams
+      if (line.startsWith('#EXT-X-STREAM-INF:')) {
+        const resMatch = line.match(/RESOLUTION=(\d+x\d+)/);
+        const bandwidthMatch = line.match(/BANDWIDTH=(\d+)/);
+        const nextLine = lines[i + 1] ? lines[i + 1].trim() : '';
+
+        if (nextLine && !nextLine.startsWith('#')) {
+          let label = 'Auto';
+          if (resMatch) {
+            const height = resMatch[1].split('x')[1];
+            label = `${height}p`;
+          }
+          videoQualities.push({
+            label,
+            resolution: resMatch ? resMatch[1] : 'Unknown',
+            bandwidth: bandwidthMatch ? parseInt(bandwidthMatch[1], 10) : 0,
+            uri: nextLine,
+          });
+        }
       }
     }
+  } catch (m3u8Err) {
+    console.warn('[Master M3U8 Sub-Playlist Warning]:', m3u8Err.message);
   }
 
-  // Fallback default audio if none parsed
+  // Fallback defaults if sub-streams were protected or blocked
+  if (videoQualities.length === 0) {
+    videoQualities.push({
+      label: 'HD (Master Stream)',
+      resolution: '1080p/720p',
+      bandwidth: 1000000,
+      uri: masterM3u8Url,
+    });
+  }
+
   if (audioTracks.length === 0) {
-    audioTracks.push({ name: 'Default Audio', lang: 'und', uri: null, isDefault: true });
+    audioTracks.push({ name: 'Default Audio (Original)', lang: 'und', uri: null, isDefault: true });
   }
 
   return {
