@@ -1,7 +1,7 @@
 {
-  "name": "netmirrortelegrambot",
+  "name": "castle-apk-telegram-downloader",
   "version": "1.0.0",
-  "description": "",
+  "description": "Castle APK Downloader, Ad-Free Mod Distro & 24/7 Cinema Bot",
   "main": "index.js",
   "scripts": {
     "start": "node src/bot.js",
